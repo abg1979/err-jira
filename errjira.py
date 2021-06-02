@@ -5,7 +5,7 @@ from itertools import chain
 import re
 
 CONFIG_TEMPLATE = {
-    'API_URL': 'http://atlassian.com',
+    'API_URL': 'https://atlassian.com',
     'USERNAME': 'errbot',
     'PASSWORD': 'password',
     'PROJECT': 'FOO',
@@ -18,7 +18,7 @@ CONFIG_TEMPLATE = {
 try:
     from jira import JIRA, JIRAError
 except ImportError:
-    raise("Please install 'jira' python package")
+    raise ImportError("Please install 'jira' python package")
 
 
 class Jira(BotPlugin):
@@ -36,7 +36,6 @@ class Jira(BotPlugin):
             self.log.info(message)
             return None
 
-        key_cert_data = None
         cert_file = self.config['OAUTH_KEY_CERT_FILE']
         try:
             with open(cert_file, 'r') as key_cert_file:
@@ -72,7 +71,7 @@ class Jira(BotPlugin):
             return authed_jira
         except JIRAError:
             message = 'Unable to login to {} via basic auth'.format(api_url)
-            self.log.error(message)
+            self.log.error(message, exc_info=True)
             return None
 
     def _login(self):
@@ -83,7 +82,6 @@ class Jira(BotPlugin):
         if self.jira is None:
             self.jira = self._login_basic()
         return self.jira
-
 
     def activate(self):
         if self.config is None:
@@ -98,7 +96,7 @@ class Jira(BotPlugin):
         else:
             self.log.error('Failed to activate Jira plugin, maybe check the configuration')
 
-    def configure(self, configuration):
+    def configure(self, configuration: dict):
         if configuration is not None and configuration != {}:
             config = dict(chain(CONFIG_TEMPLATE.items(), configuration.items()))
         else:
@@ -110,11 +108,11 @@ class Jira(BotPlugin):
         Check the plugin config, raise errors
         """
         if not configuration.get('API_URL', '').lower().startswith('http'):
-            raise Exception('Config validation failed for API_URL, this does not start with http')
+            raise ValueError('Config validation failed for API_URL, this does not start with http')
         if not configuration.get('USERNAME', ''):
-            raise Exception('Config validation failed for USERNAME, seems empty or not set')
+            raise ValueError('Config validation failed for USERNAME, seems empty or not set')
         if not configuration.get('PASSWORD', ''):
-            raise Exception('Config validation failed for PASSWORD, seems empty or not set')
+            raise ValueError('Config validation failed for PASSWORD, seems empty or not set')
 
     def get_configuration_template(self):
         """
@@ -247,9 +245,8 @@ class Jira(BotPlugin):
     def jira_listener(self, msg, match):
         """List for jira ID and display theyr summary"""
         try:
-            if msg.frm.person.strip() != self.bot_config.BOT_PREFIX.strip() and \
-               msg.frm.person not in self.bot_config.BOT_ALT_PREFIXES:
-                self.jira_get(msg, ['-'.join(match.groups()[1:3]).upper()])
+            self.log.info("Got message [%s]" % msg)
+            self.jira_get(msg, ['-'.join(match.groups()[1:3]).upper()])
         except CommandError:
             pass
 
@@ -289,6 +286,7 @@ class Jira(BotPlugin):
         for x in self.jira_jql(msg, args):
             yield x
 
+
 def verify_and_generate_issueid(issueid):
     """
     Take a Jira issue ID lowercase, or without a '-' and return a valid Jira issue ID.
@@ -304,6 +302,7 @@ def verify_and_generate_issueid(issueid):
         for match in set(matches):
             return match[0].upper() + '-' + match[1]
     return None
+
 
 def get_username_from_summary(summary):
     """
