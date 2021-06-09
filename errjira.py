@@ -5,6 +5,8 @@ from itertools import chain
 import re
 from typing import List
 import subprocess
+from subprocess import Popen
+import logging
 
 CONFIG_TEMPLATE = {
     'API_URL': 'https://jira.yours',
@@ -77,7 +79,7 @@ class JiraServer(object):
         if password_cmd:
             self.plugin.log.info("Executing command [%s]" % password_cmd)
             try:
-                password = subprocess.check_output(password_cmd)
+                password = run_cmd(password_cmd, self.plugin.log)
             except subprocess.CalledProcessError:
                 self.plugin.log.error("Could not execute command [%s]" % password_cmd, exc_info=True)
         if not password:
@@ -386,3 +388,49 @@ def get_username_from_summary(summary):
     if last_word[0] == '@':
         return summary[:-len(last_word) - 1], last_word[1:]
     return summary, None
+
+
+def run_cmd(args, logger, log_level='DEBUG'):
+    process = Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    output, err_output = process.communicate()
+    retcode = process.poll()
+
+    if output is not None:
+        for subprocess_output_line in output.splitlines():
+            logger.log(logging.getLevelName(log_level), 'STDOUT: %s' % subprocess_output_line)
+    if err_output is not None:
+        for subprocess_error_line in err_output.splitlines():
+            logger.log(logging.getLevelName(log_level), 'STDERR: %s' % subprocess_error_line)
+
+    if retcode:
+        cmd = args[0]
+        raise ProcessExecutionException(returncode=retcode, cmd=cmd, output=output)
+
+    return output
+
+
+class ProcessExecutionException(Exception):
+    """This exception is raised when a process run by check_call() or
+    check_output() returns a non-zero exit status.
+    The exit status will be stored in the returncode attribute;
+    check_output() will also store the output in the output attribute.
+    """
+
+    def __init__(self, exception=None, returncode=0, cmd=None, output=None, *args, **kwargs):
+        super(ProcessExecutionException, self).__init__(*args, **kwargs)
+        if exception is not None:
+            if hasattr(exception, 'returncode'):
+                self.returncode = exception.returncode
+            if hasattr(exception, 'cmd'):
+                self.cmd = exception.cmd
+            if hasattr(exception, 'output'):
+                self.output = exception.output
+        else:
+            self.returncode = returncode
+            self.cmd = cmd
+            self.output = output
+
+    def __str__(self):
+        return "Command '%s' returned non-zero exit status %d" % (self.cmd, self.returncode)
+
+
