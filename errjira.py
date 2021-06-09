@@ -3,11 +3,14 @@ from errbot import BotPlugin, CommandError
 from errbot import botcmd, arg_botcmd, re_botcmd
 from itertools import chain
 import re
+from typing import List
+import subprocess
 
 CONFIG_TEMPLATE = {
     'API_URL': 'https://atlassian.com',
     'USERNAME': 'errbot',
     'PASSWORD': 'password',
+    'PASSWORD_CMD': ['cat', '/home/errbot/.jira.password'],
     'PROJECT': 'FOO',
     'OAUTH_ACCESS_TOKEN': None,
     'OAUTH_ACCESS_TOKEN_SECRET': None,
@@ -16,65 +19,82 @@ CONFIG_TEMPLATE = {
 }
 
 try:
-    from jira import JIRA, JIRAError
+    from jira import JIRA, JIRAError, Issue, User
 except ImportError:
     raise ImportError("Please install 'jira' python package")
 
 
-class Jira(BotPlugin):
-    """
-    An errbot plugin for working with Atlassian JIRA
-    """
+class JiraServer(object):
 
-    def _login_oauth(self):
+    def __init__(self, plugin: BotPlugin) -> None:
+        super().__init__()
+        self.jira = None
+        self.plugin = plugin
+
+    def activate(self):
+        return self._login()
+
+    def _login_oauth(self) -> JIRA:
         """
         Login to Jira with OAUTH
         """
-        api_url = self.config['API_URL']
-        if self.config['OAUTH_ACCESS_TOKEN'] is None:
+        api_url = self.plugin.config['API_URL']
+        if self.plugin.config['OAUTH_ACCESS_TOKEN'] is None:
             message = 'oauth configuration not set'
-            self.log.info(message)
+            self.plugin.log.info(message)
             return None
 
-        cert_file = self.config['OAUTH_KEY_CERT_FILE']
+        cert_file = self.plugin.config['OAUTH_KEY_CERT_FILE']
         try:
             with open(cert_file, 'r') as key_cert_file:
                 key_cert_data = key_cert_file.read()
             oauth_dict = {
-                'access_token': self.config['OAUTH_ACCESS_TOKEN'],
-                'access_token_secret': self.config['OAUTH_ACCESS_TOKEN_SECRET'],
-                'consumer_key': self.config['OAUTH_CONSUMER_KEY'],
+                'access_token': self.plugin.config['OAUTH_ACCESS_TOKEN'],
+                'access_token_secret': self.plugin.config['OAUTH_ACCESS_TOKEN_SECRET'],
+                'consumer_key': self.plugin.config['OAUTH_CONSUMER_KEY'],
                 'key_cert': key_cert_data
             }
             authed_jira = JIRA(server=api_url, oauth=oauth_dict)
-            self.log.info('logging into {} via oauth'.format(api_url))
+            self.plugin.log.info('logging into {} via oauth'.format(api_url))
             return authed_jira
         except JIRAError:
             message = 'Unable to login to {} via oauth'.format(api_url)
-            self.log.error(message)
+            self.plugin.log.error(message)
             return None
         except TypeError:
             message = 'Unable to read key file {}'.format(cert_file)
-            self.log.error(message)
+            self.plugin.log.error(message)
             return None
 
-    def _login_basic(self):
+    def _login_basic(self) -> JIRA:
         """
         Login to Jira with basic auth
         """
-        api_url = self.config['API_URL']
-        username = self.config['USERNAME']
-        password = self.config['PASSWORD']
+        api_url = self.plugin.config['API_URL']
+        username = self.plugin.config['USERNAME']
+        password_cmd = self.plugin.config.get('PASSWORD_CMD', None)
+        password = None
+        if password_cmd:
+            self.plugin.log.info("Executing command [%s]" % password_cmd)
+            try:
+                password = subprocess.check_output(password_cmd)
+            except subprocess.CalledProcessError:
+                self.plugin.log.error("Could not execute command [%s]" % password_cmd, exc_info=True)
+        if not password:
+            password = self.plugin.config.get('PASSWORD', None)
+        if not password:
+            self.plugin.log.error("Password not available.")
+            return None
         try:
             authed_jira = JIRA(server=api_url, basic_auth=(username, password))
-            self.log.info('logging into {} via basic auth'.format(api_url))
+            self.plugin.log.info('logging into {} via basic auth'.format(api_url))
             return authed_jira
         except JIRAError:
             message = 'Unable to login to {} via basic auth'.format(api_url)
-            self.log.error(message, exc_info=True)
+            self.plugin.log.error(message, exc_info=True)
             return None
 
-    def _login(self):
+    def _login(self) -> JIRA:
         """
         Login to Jira
         """
@@ -83,6 +103,61 @@ class Jira(BotPlugin):
             self.jira = self._login_basic()
         return self.jira
 
+    def _login_wrapper(self, func):
+        try:
+            return func()
+        except JIRAError as j:
+            if j.status_code == 403:
+                self._login()
+
+    def search_assignable_users_for_projects(self, userstring, param) -> List[User]:
+        def func():
+            return self.jira.search_assignable_users_for_projects(userstring, param)
+
+        return self._login_wrapper(func)
+
+    def issue(self, issueid) -> Issue:
+        def func():
+            return self.jira.issue(issueid)
+
+        return self._login_wrapper(func)
+
+    def transitions(self, issue):
+        def func():
+            return self.jira.transitions(issue)
+
+        return self._login_wrapper(func)
+
+    def create_issue(self, fields):
+        def func():
+            return self.jira.create_issue(fields)
+
+        return self._login_wrapper(func)
+
+    def transition_issue(self, issueid, transition):
+        def func():
+            return self.jira.transition_issue(issueid, transition)
+
+        return self._login_wrapper(func)
+
+    def assign_issue(self, issue, name):
+        def func():
+            return self.jira.assign_issue(issue, name)
+
+        return self._login_wrapper(func)
+
+    def search_issues(self, JQL, maxResults):
+        def func():
+            return self.jira.search_issues(JQL, maxResults)
+
+        return self._login_wrapper(func)
+
+
+class Jira(BotPlugin):
+    """
+    An errbot plugin for working with Atlassian JIRA
+    """
+
     def activate(self):
         if self.config is None:
             message = 'Jira not configured.'
@@ -90,8 +165,8 @@ class Jira(BotPlugin):
             self.warn_admins(message)
             return
 
-        self.jira = self._login()
-        if self.jira:
+        self.jira = JiraServer(self)
+        if self.jira.activate():
             super(Jira, self).activate()
         else:
             self.log.error('Failed to activate Jira plugin, maybe check the configuration')
@@ -120,14 +195,14 @@ class Jira(BotPlugin):
         """
         return CONFIG_TEMPLATE
 
-    def _find_one_user(self, msg, userstring):
+    def _find_one_user(self, msg, user_string):
         """
-        Return one jira user corresponding to userstring.
+        Return one jira user corresponding to user_string.
         Stop the execution by raising a jira.CommandError if none or too many users found.
         """
-        users = self.jira.search_assignable_users_for_projects(userstring, self.config['PROJECT'])
+        users = self.jira.search_assignable_users_for_projects(user_string, self.config['PROJECT'])
         if len(users) == 0:
-            raise CommandError('No corresponding user found: {}'.format(userstring))
+            raise CommandError('No corresponding user found: {}'.format(user_string))
         elif len(users) > 1:
             raise CommandError('Too many users found: {}'.format(', '.join([u.name for u in users])))
         else:
@@ -143,47 +218,47 @@ class Jira(BotPlugin):
             raise CommandError('Issue id format incorrect')
         return issue
 
-    def _verify_transition_for_id(self, issueid, tname):
+    def _verify_transition_for_id(self, issue_id, transition_name):
         """
         Ensure that a transition `tname` (case insensitive) is valid for `issueid` and return the transition
         ID that can be used to transition the issue.
         """
-        issue = self._verify_issue_id(issueid)
+        verified_issue_id = self._verify_issue_id(issue_id)
         try:
-            issue = self.jira.issue(issueid)
+            issue = self.jira.issue(verified_issue_id)
         except JIRAError:
-            raise CommandError('Error connecting to Jira, issue {} might not exist'.format(issueid))
+            raise CommandError('Error connecting to Jira, issue {} might not exist'.format(verified_issue_id))
         transitions = self.jira.transitions(issue)
         transition_to_id = dict((x['name'].lower(), x['id']) for x in transitions)
-        if tname.lower() not in transition_to_id.keys():
+        if transition_name.lower() not in transition_to_id.keys():
             raise CommandError('Transition {} does not exist, available transitions: {}'.format(
-                tname,
-                ''.join(['\n\t- '+x for x in transition_to_id.keys()]))
+                transition_name,
+                ''.join(['\n\t- ' + x for x in transition_to_id.keys()]))
             )
-        return transition_to_id[tname.lower()]
+        return transition_to_id[transition_name.lower()]
 
     @botcmd(split_args_with=' ')
     def jira_get(self, msg, args):
         """
         Describe a ticket. Usage: jira get <issue_id>
         """
-        issue = self._verify_issue_id(args.pop(0))
+        issue_id = self._verify_issue_id(args.pop(0))
         try:
-            issue = self.jira.issue(issue)
+            issue = self.jira.issue(issue_id)
             self.send_card(
-                title= issue.fields.summary,
-                summary = 'Jira issue {}:'.format(issue),
+                title=issue.fields.summary,
+                summary='Jira issue {}:'.format(issue_id),
                 link=issue.permalink(),
                 body=issue.fields.status.name,
                 fields=(
                     ('Assignee', issue.fields.assignee.displayName if issue.fields.assignee else 'None'),
-                    ('Status',issue.fields.priority.name),
+                    ('Status', issue.fields.priority.name),
                 ),
                 color='red',
                 in_reply_to=msg
             )
         except JIRAError:
-            raise CommandError('Error communicating with Jira, issue {} does not exist?'.format(issue))
+            raise CommandError('Error communicating with Jira, issue {} does not exist?'.format(issue_id))
 
     @arg_botcmd('summary', type=str, nargs='+', help='Can end with @username to assign the task to `username`')
     @arg_botcmd('-t', dest='itype', type=str, default='Task', help='Task name')
@@ -194,7 +269,8 @@ class Jira(BotPlugin):
         """
         summary = ' '.join(summary)
         if not summary:
-            raise CommandError('You did not provide a summary.\nUsage: jira create [-t <type>] [-p <priority>] <summary> [@user]')
+            raise CommandError('You did not provide a summary.\n'
+                               'Usage: jira create [-t <type>] [-p <priority>] <summary> [@user]')
         summary, user = get_username_from_summary(summary)
         if user is not None:
             user = self._find_one_user(msg, user)
@@ -208,7 +284,7 @@ class Jira(BotPlugin):
             }
             if user is not None:
                 issue_dict['assignee'] = {'name': user.name}
-            issue = self.jira.create_issue(fields = issue_dict)
+            issue = self.jira.create_issue(fields=issue_dict)
             self.jira_get(msg, [issue.key])
         except JIRAError:
             return 'Something went wrong when calling Jira API, please ensure all fields are valid'
@@ -239,7 +315,7 @@ class Jira(BotPlugin):
             self.jira.assign_issue(issue, user.name)
             return 'Issue {} assigned to {}'.format(issue, user)
         except JIRAError:
-            raise CommandError('Error communicating with Jira, issue {} does not exist?'.format(issue))
+            raise CommandError('Error communicating with Jira, issue {} does not exist?'.format(issueid))
 
     @re_botcmd(pattern=r"(^| )([^\W\d_]+)\-(\d+)( |$|\?|!\.)", prefixed=False, flags=re.IGNORECASE)
     def jira_listener(self, msg, match):
@@ -250,16 +326,16 @@ class Jira(BotPlugin):
         except CommandError:
             pass
 
-
     @botcmd(split_args_with=None)
     def jira_jql(self, msg, args):
         """JQL search for a Jira tickets. Usage: jira search jql <JQL query>"""
         try:
-            JQL = 'project='+self.config['PROJECT'] + ' and ' + ' '.join(args)
-            for issue in self.jira.search_issues(JQL, maxResults=50):
-                yield '- [{}]({}) - {} - {}'.format(issue, issue.permalink(), issue.fields.status.name, issue.fields.summary)
+            jql = 'project=' + self.config['PROJECT'] + ' and ' + ' '.join(args)
+            for issue in self.jira.search_issues(jql, maxResults=50):
+                yield '- [{}]({}) - {} - {}'.format(issue, issue.permalink(), issue.fields.status.name,
+                                                    issue.fields.summary)
         except JIRAError as e:
-            yield  e.text
+            yield e.text
 
     @arg_botcmd('search', type=str, nargs='+', help='Search string')
     @arg_botcmd('--open', dest='open', action='store_true', help='Only open items')
@@ -278,12 +354,12 @@ class Jira(BotPlugin):
     @botcmd(split_args_with=None)
     def jira_mine(self, msg, args):
         """Shortuc to search for opened Jira items assigned to the requesting user"""
-        args = ['(']
-        args += ['assignee', '=', '{}'.format(msg.frm.person.lstrip('@'))]
-        args += ['AND', 'status', '!=', 'Closed']
-        args += [')']
-        args += 'order by created desc'.split()
-        for x in self.jira_jql(msg, args):
+        jql_args = ['(']
+        jql_args += ['assignee', '=', '{}'.format(msg.frm.person.lstrip('@'))]
+        jql_args += ['AND', 'status', '!=', 'Closed']
+        jql_args += [')']
+        jql_args += 'order by created desc'.split()
+        for x in self.jira_jql(msg, jql_args):
             yield x
 
 
@@ -293,9 +369,7 @@ def verify_and_generate_issueid(issueid):
     Return None if issueid can't be transformed
     """
     matches = []
-    regexes = []
-    regexes.append(r'([^\W\d_]+)\-(\d+)')  # e.g.: issue-1234
-    regexes.append(r'([^\W\d_]+)(\d+)')    # e.g.: issue1234
+    regexes = [r'([^\W\d_]+)\-(\d+)', r'([^\W\d_]+)(\d+)']
     for regex in regexes:
         matches.extend(re.findall(regex, issueid, flags=re.I | re.U))
     if matches:
@@ -308,7 +382,7 @@ def get_username_from_summary(summary):
     """
     If the summary string ends with `@someone`, return `someone`
     """
-    lastword = summary.rsplit(None, 1)[-1]
-    if lastword[0] == '@':
-        return summary[:-len(lastword)-1], lastword[1:]
+    last_word = summary.rsplit(None, 1)[-1]
+    if last_word[0] == '@':
+        return summary[:-len(last_word) - 1], last_word[1:]
     return summary, None

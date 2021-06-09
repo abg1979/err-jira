@@ -5,3 +5,4 @@ requests-oauthlib
 IPython
 filemagic
 tlslite
+retrying
