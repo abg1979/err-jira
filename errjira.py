@@ -7,7 +7,7 @@ from typing import List
 import subprocess
 
 CONFIG_TEMPLATE = {
-    'API_URL': 'https://atlassian.com',
+    'API_URL': 'https://jira.yours',
     'USERNAME': 'errbot',
     'PASSWORD': 'password',
     'PASSWORD_CMD': ['cat', '/home/errbot/.jira.password'],
