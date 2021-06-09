@@ -9,7 +9,7 @@ import subprocess
 CONFIG_TEMPLATE = {
     'API_URL': 'https://jira.yours',
     'USERNAME': 'errbot',
-    'PASSWORD': 'password',
+    'PASSWORD': '',
     'PASSWORD_CMD': ['cat', '/home/errbot/.jira.password'],
     'PROJECT': 'FOO',
     'OAUTH_ACCESS_TOKEN': None,
@@ -186,8 +186,8 @@ class Jira(BotPlugin):
             raise ValueError('Config validation failed for API_URL, this does not start with http')
         if not configuration.get('USERNAME', ''):
             raise ValueError('Config validation failed for USERNAME, seems empty or not set')
-        if not configuration.get('PASSWORD', ''):
-            raise ValueError('Config validation failed for PASSWORD, seems empty or not set')
+        if not configuration.get('PASSWORD', '') and not configuration.get('PASSWORD_CMD', ''):
+            raise ValueError('Config validation failed for PASSWORD and PASSWORD_CMD, seems empty or not set')
 
     def get_configuration_template(self):
         """
