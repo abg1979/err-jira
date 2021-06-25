@@ -7,13 +7,14 @@ from typing import List
 import subprocess
 from subprocess import Popen
 import logging
+import os
 
 CONFIG_TEMPLATE = {
-    'API_URL': 'https://jira.yours',
-    'USERNAME': 'errbot',
-    'PASSWORD': '',
-    'PASSWORD_CMD': ['cat', '/home/errbot/.jira.password'],
-    'PROJECT': 'FOO',
+    'API_URL': None,
+    'USERNAME': None,
+    'PASSWORD': None,
+    'PASSWORD_FILE': None,
+    'PROJECT': None,
     'OAUTH_ACCESS_TOKEN': None,
     'OAUTH_ACCESS_TOKEN_SECRET': None,
     'OAUTH_CONSUMER_KEY': None,
@@ -74,16 +75,12 @@ class JiraServer(object):
         """
         api_url = self.plugin.config['API_URL']
         username = self.plugin.config['USERNAME']
-        password_cmd = self.plugin.config.get('PASSWORD_CMD', None)
-        password = None
-        if password_cmd:
-            self.plugin.log.info("Executing command [%s]" % password_cmd)
-            try:
-                password = run_cmd(password_cmd, self.plugin.log)
-            except subprocess.CalledProcessError:
-                self.plugin.log.error("Could not execute command [%s]" % password_cmd, exc_info=True)
+        password = self.plugin.config.get('PASSWORD', None)
         if not password:
-            password = self.plugin.config.get('PASSWORD', None)
+            password_file = self.plugin.config.get('PASSWORD_FILE', None)
+            if os.path.isfile(password_file):
+                with open(password_file, mode='r') as password_file_handle:
+                    password = password_file_handle.read()
         if not password:
             self.plugin.log.error("Password not available.")
             return None
@@ -432,5 +429,3 @@ class ProcessExecutionException(Exception):
 
     def __str__(self):
         return "Command '%s' returned non-zero exit status %d" % (self.cmd, self.returncode)
-
-
