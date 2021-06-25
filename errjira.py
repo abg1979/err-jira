@@ -185,8 +185,8 @@ class Jira(BotPlugin):
             raise ValueError('Config validation failed for API_URL, this does not start with http')
         if not configuration.get('USERNAME', ''):
             raise ValueError('Config validation failed for USERNAME, seems empty or not set')
-        if not configuration.get('PASSWORD', '') and not configuration.get('PASSWORD_CMD', ''):
-            raise ValueError('Config validation failed for PASSWORD and PASSWORD_CMD, seems empty or not set')
+        if not configuration.get('PASSWORD', '') and not configuration.get('PASSWORD_FILE', ''):
+            raise ValueError('Config validation failed for PASSWORD and PASSWORD_FILE, seems empty or not set')
 
     def get_configuration_template(self):
         """
