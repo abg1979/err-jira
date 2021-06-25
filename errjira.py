@@ -80,13 +80,16 @@ class JiraServer(object):
             password_file = self.plugin.config.get('PASSWORD_FILE', None)
             if password_file and os.path.isfile(password_file):
                 with open(password_file, mode='r') as password_file_handle:
-                    password = password_file_handle.read()
+                    password = password_file_handle.read().strip()
         if not password:
             self.plugin.log.error("Password not available.")
             return None
         try:
+            self.plugin.log.info(
+                'logging into {} via basic auth user:[{}] password:[{}]'.format(api_url, username, password))
             authed_jira = JIRA(server=api_url, basic_auth=(username, password))
-            self.plugin.log.info('logging into {} via basic auth'.format(api_url))
+            self.plugin.log.info(
+                'logged into {} via basic auth user:[{}] password:[{}]'.format(api_url, username, password))
             return authed_jira
         except JIRAError:
             message = 'Unable to login to {} via basic auth'.format(api_url)
