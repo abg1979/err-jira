@@ -78,7 +78,7 @@ class JiraServer(object):
         password = self.plugin.config.get('PASSWORD', None)
         if not password:
             password_file = self.plugin.config.get('PASSWORD_FILE', None)
-            if os.path.isfile(password_file):
+            if password_file and os.path.isfile(password_file):
                 with open(password_file, mode='r') as password_file_handle:
                     password = password_file_handle.read()
         if not password:
